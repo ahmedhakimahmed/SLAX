@@ -1,0 +1,216 @@
+/*
+*  Validation OP SLAX script for new turn up or Operational  Juniper nodes
+*
+*  This OP SLAX Script to execute Junos OS operational commands
+*  then inspecting the resulting output.
+*
+*  The Checks will address Hardware, System, Physical Connectivity and Logical Sessions.
+*
+*  This script created initially for srx5800
+*  It may not work as expected for other chassis ,due to XML display output
+*
+*  XML display might slightly change between different Juniper
+*  platforms for very few commands
+*
+*
+*  Created by Ahmed Abdelhakim ( ahmed.abdelhakim@three.ie)
+*
+*  Version History
+*  ===============
+*  v0.1    Initial release (by AAbdelhakim@)
+*
+*
+*/
+
+version 1.1;
+
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+
+import "../import/junos.xsl";
+
+
+match /
+{
+<op-script-results>  {
+
+
+<output> "----------------------------------------------------------------------------------------------------------------";
+<output> "                                              Welcome "_ $user ;
+<output> "----------------------------------------------------------------------------------------------------------------";
+<output> "       ** This is the output of the script "_ $script _ " for "_ $hostname _" on " _$localtime _ " ** ";
+<output> "----------------------------------------------------------------------------------------------------------------";
+call chassis-template();
+<output> "----------------------------------------------------------------------------------------------------------------";
+call system-template();
+<output> "----------------------------------------------------------------------------------------------------------------";
+call system-version-template();
+<output> "----------------------------------------------------------------------------------------------------------------";
+call bgp-template();
+<output> "----------------------------------------------------------------------------------------------------------------";
+call interface-DESC-template();
+<output> "----------------------------------------------------------------------------------------------------------------";
+call fpc-status();
+<output> "----------------------------------------------------------------------------------------------------------------";
+call pic-status();
+<output> "----------------------------------------------------------------------------------------------------------------";
+call chassis-enviroment();
+<output> "----------------------------------------------------------------------------------------------------------------";
+ }
+}
+
+template chassis-template() {
+
+/* CHASSIS ALARMS */
+
+var $query0 = { <command> "show chassis alarms"; }
+var $result0 = jcs:invoke($query0);
+<alarm-information> {
+ for-each($result0) {
+  if ($result0/alarm-detail/alarm-class != "") {
+   <output> "CHASSIS:        *** RED *** : " _$result0/alarm-detail/alarm-class _" ALARM - " _$result0/alarm-detail/alarm-description;
+      }
+else {
+<output> "CHASSIS:        * GREEN * : There are no active chassis alarms";
+     }
+    }
+   }
+}
+
+template system-template() {
+
+/* SYSTEM ALARMS */
+
+var $query10 = { <command> "show system alarms"; }
+var $result10 = jcs:invoke($query10);
+<alarm-information> {
+ for-each($result10) {
+  if ($result10/alarm-detail/alarm-class != "") {
+   <output> "SYSTEM:         *** RED *** : " _$result10/alarm-detail/alarm-class _" ALARM - " _$result10/alarm-detail/alarm-description;
+      }
+else {
+<output> "SYSTEM:         * GREEN * : There are no active system alarms";
+    }
+   }
+  }
+}
+
+template system-version-template() {
+
+/* SYSTEM VERSION */
+
+var $query20 = { <command> "show version"; }
+var $result20 = jcs:invoke($query20);
+<software-information> {
+ <output> "Junos_Version:  <  INFO   > : " _$result20/host-name _ " is a " _$result20/product-model _  " Junos Release " _$result20/junos-version _ " running " _$result20/package-information/comment;
+   }
+ }
+
+template interface-DESC-template() {
+
+var $query30 = { <command> "show interfaces descriptions"; }
+var $result30 = jcs:invoke($query30);
+<interface-information junos:style = "description"> {
+ for-each ($result30/logical-interface) {
+  if ((admin-status=="up") && (oper-status=="down")) {
+  <output> "INTERFACE:      *** RED *** : " _ description _" is Admin Up and Operationally DOWN";
+  <output> "INTERFACE:      *** RED *** : " _ description _"  Interface NOT Healthy";          }
+else {
+  <output> "INTERFACES:     * GREEN * : " _ description _" Interface Healthy";
+         }
+       }
+    }
+}
+
+
+template bgp-template() {
+
+/* Define_BGP_PEERS_UP */
+
+var $query40 = {
+    <get-bgp-summary-information>;
+}
+var $result40 = jcs:invoke($query40);
+var $count40 = count($result40/bgp-peer[peer-state=="Established"]);
+ <output> "BGP:            * GREEN * : There are "_$count40 _ " BGP neighbor sessions UP";
+
+/* Define_BGP_PEERS_DOWN */
+
+var $query50 = { <command> "show bgp summary"; }
+var $result50 = jcs:invoke($query50);
+<bgp-information> {
+ for-each($result50/bgp-peer[peer-state!="Established"]) {
+  <output> "BGP:            *** RED *** : Peer " _ description _" @ " _ peer-address _" is DOWN";
+    }
+   }
+}
+
+
+template fpc-status() {
+/* CHASSIS FPC STATE */
+var $query60 = { <command> "show chassis fpc"; }
+var $result60 = jcs:invoke($query60);
+<fpc-information junos:style = "brief"> {
+ for-each ($result60/fpc) {
+  if ((state=="Offline") || (state=="Present") ) {
+  <output> "Line-Card:      *** RED *** : FPC" _ slot _" is NOT Healthy";
+            }
+else if (state=="Empty") {
+            }
+
+else {
+  <output> "Line-Card:      * GREEN * : FPC"_ slot _"is being Healthy" ;
+         }
+       }
+   }
+}
+
+template pic-status() {
+
+/* FPC-PIC STATE */
+
+var $query70 = { <command> "show chassis fpc pic-status"; }
+var $result70 = jcs:invoke($query70);
+<fpc-information junos:style = "pic-style"> {
+ for-each ($result70/fpc) {
+  if ((state=="Online") && (pic/pic-state=="Online")) {
+  <output> "PIC:            * GREEN * : FPC " _ slot _  " Line_Card "  _ description _ " PIC-Slot " _ pic/pic-slot _  " PIC-Type " _ pic/pic-type _  " Healthy ";
+            }
+else if ((state=="Online") && (pic/pic-state!="Online")) {
+  <output> "PIC:            *** RED *** : FPC " _ slot _  " Line_Card "  _ description _ " PIC-Slot " _ pic/pic-slot _  " PIC-Type " _ pic/pic-type _  " NOT Function   ";
+            }
+else if (state!="Online") {
+  <output> "PIC:            *** RED *** : FPC " _ slot _  " Line_Card "  _ description _ " NOT Function   ";
+            }
+else {
+  <output> "Line-Card:      *** YELLOW *** "_ slot _"Unexpected State, Verify it manually using --> show chassis fpc pic-status";
+         }
+       }
+   }
+}
+
+template chassis-enviroment() {
+
+/* CHASSIS-Component */
+
+var $query80 = {
+    <get-environment-information>;
+}
+var $result80 = jcs:invoke($query80);
+var $count80 = count($result80/environment-item[status="OK"]);
+<output> "Chassis-Enviroment:    * GREEN * : There are "_$count80 _ " Chassis Component [ RE - CB - SIB - FPC - FAN - POWER SUPPLY ]Function Properly ";
+
+
+/* CHASSIS-ENV */
+var $query90 = { <command> "show chassis environment"; }
+var $result90 = jcs:invoke($query90);
+<environment-information> {
+for-each($result90/environment-item) {
+ if ((status!="OK") && (status!="Absent")) {
+ <output> "Chassis-Enviroment:    *** RED *** : " _ name _ " Has Issue";
+    }
+  }
+ }
+}
+
